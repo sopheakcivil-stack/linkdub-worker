@@ -26,6 +26,11 @@ class Settings:
     oidc_audience: str = os.getenv("LINKDUB_OIDC_AUDIENCE", "linkdub-worker")
     whisper_model: str = os.getenv("WHISPER_MODEL", "small")
     whisper_compute_type: str = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
+    whisper_batch_size: int = int(os.getenv("WHISPER_BATCH_SIZE", "8"))
+    whisper_cpu_threads: int = int(os.getenv("WHISPER_CPU_THREADS", "4"))
+    transcription_chunks: int = int(os.getenv("TRANSCRIPTION_CHUNKS", "4"))
+    translation_workers: int = int(os.getenv("TRANSLATION_WORKERS", "8"))
+    voice_workers: int = int(os.getenv("VOICE_WORKERS", "6"))
     original_audio_volume: float = float(os.getenv("ORIGINAL_AUDIO_VOLUME", "0.18"))
     enable_demucs: bool = os.getenv("ENABLE_DEMUCS", "0") == "1"
     burn_subtitles: bool = os.getenv("BURN_SUBTITLES", "0") == "1"
@@ -34,4 +39,3 @@ class Settings:
     ffprobe_bin: str = os.getenv("FFPROBE_BIN", "ffprobe")
 
 SETTINGS = Settings()
-
