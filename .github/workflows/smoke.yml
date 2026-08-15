@@ -1,0 +1,46 @@
+name: Verify LinkDub end to end
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/smoke.yml"
+
+concurrency:
+  group: linkdub-production-worker
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      WHISPER_MODEL: small
+      WHISPER_COMPUTE_TYPE: int8
+      MAX_VIDEO_SECONDS: "10800"
+      ENABLE_DEMUCS: "0"
+      ORIGINAL_AUDIO_VOLUME: "0.18"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Cache speech recognition model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: faster-whisper-small-v1
+      - name: Install media tools and worker dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg
+          python -m pip install --requirement requirements.txt
+      - name: Process the short verification job
+        run: python -m linkdub.main
+
