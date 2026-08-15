@@ -1,6 +1,14 @@
 name: Process LinkDub queue
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - "linkdub/**"
+      - "run_worker.py"
+      - "requirements*.txt"
+      - ".github/workflows/process.yml"
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
@@ -45,4 +53,3 @@ jobs:
 
       - name: Claim and process one queued job
         run: python -m linkdub.main
-
