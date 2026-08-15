@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -73,12 +74,21 @@ class Pipeline:
         self.stage("Transcribing", 24)
         segments = transcribe_chinese(speech_audio, self.settings)
 
+        return self.finish(source, duration, segments)
+
+    def finish(
+        self,
+        source: Path,
+        duration: float,
+        segments: list[Segment],
+    ) -> dict[str, str]:
+
         self.stage("Splitting", 43)
         source_srt = self.workdir / "source-zh.srt"
         write_srt(segments, source_srt, translated=False)
 
         self.stage("Translating", 50)
-        translate_segments(segments, self.target_language)
+        translate_segments(segments, self.target_language, self.settings)
         translated_srt = self.workdir / "translated.srt"
         write_srt(segments, translated_srt, translated=True)
         self.api.save_segments(self.job_id, [segment.to_api() for segment in segments])
@@ -134,9 +144,10 @@ class Pipeline:
         }
 
     def _generate_voices(self, segments: list[Segment]) -> list[Path]:
-        fitted: list[Path] = []
+        fitted: list[Path | None] = [None] * len(segments)
         last_reported = 60
-        for index, segment in enumerate(segments):
+
+        def generate(index: int, segment: Segment) -> tuple[int, Path]:
             raw_path = self.workdir / f"voice-{index:05d}.mp3"
             fitted_path = self.workdir / f"voice-{index:05d}.wav"
             generate_voice(segment.translated_text, self.target_language, raw_path)
@@ -144,10 +155,21 @@ class Pipeline:
                 raw_path, fitted_path, segment.duration, settings=self.settings
             )
             raw_path.unlink(missing_ok=True)
-            fitted.append(fitted_path)
-            progress = 60 + int(19 * (index + 1) / len(segments))
-            if progress >= last_reported + 3:
-                self.stage("Generating Voices", progress)
-                last_reported = progress
-        return fitted
+            return index, fitted_path
 
+        workers = max(1, min(self.settings.voice_workers, len(segments)))
+        completed = 0
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [
+                executor.submit(generate, index, segment)
+                for index, segment in enumerate(segments)
+            ]
+            for future in as_completed(futures):
+                index, fitted_path = future.result()
+                fitted[index] = fitted_path
+                completed += 1
+                progress = 60 + int(19 * completed / len(segments))
+                if progress >= last_reported + 3:
+                    self.stage("Generating Voices", progress)
+                    last_reported = progress
+        return [path for path in fitted if path is not None]
