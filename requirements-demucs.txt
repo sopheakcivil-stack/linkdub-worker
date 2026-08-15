@@ -1,0 +1,4 @@
+# Optional high-quality dialogue/background separation. This is deliberately
+# separate because PyTorch makes the worker image several gigabytes larger.
+demucs==4.0.1
+
