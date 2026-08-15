@@ -2,6 +2,5 @@ deep-translator==1.11.4
 edge-tts==7.2.8
 faster-whisper==1.2.1
 requests==2.34.2
-tuspy==1.1.0
 yt-dlp==2026.7.4
 

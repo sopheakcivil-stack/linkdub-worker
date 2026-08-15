@@ -7,7 +7,6 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
-from tusclient import client as tus_client
 
 from .config import SETTINGS, Settings
 
@@ -90,20 +89,32 @@ class WorkerApiClient:
 
     def upload_artifact(self, job_id: str, kind: str, path: Path) -> dict[str, str]:
         signed = self._post({"action": "upload-url", "job_id": job_id, "kind": kind})
-        uploader = tus_client.TusClient(
-            self.settings.storage_tus_url,
-            headers={"x-signature": signed["token"], "x-upsert": "true"},
-        ).uploader(
-            file_path=str(path),
-            chunk_size=6 * 1024 * 1024,
-            metadata={
-                "bucketName": "linkdub-results",
-                "objectName": signed["path"],
-                "contentType": signed["content_type"],
-                "cacheControl": "3600",
-            },
-        )
-        uploader.upload()
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                with path.open("rb") as artifact:
+                    response = requests.put(
+                        str(signed["signed_url"]),
+                        data=artifact,
+                        headers={
+                            "content-type": str(signed["content_type"]),
+                            "cache-control": "max-age=3600",
+                            "x-upsert": "true",
+                        },
+                        timeout=(30, 1800),
+                    )
+                if response.status_code >= 400:
+                    raise WorkerApiError(
+                        f"Storage upload returned {response.status_code}: "
+                        f"{response.text[:1000]}"
+                    )
+                break
+            except (requests.RequestException, WorkerApiError) as exc:
+                last_error = exc
+                if attempt + 1 < 3:
+                    time.sleep(2**attempt)
+        else:
+            raise WorkerApiError(str(last_error or "Storage upload failed"))
         return {
             "path": str(signed["path"]),
             "public_url": str(signed["public_url"]),

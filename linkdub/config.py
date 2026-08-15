@@ -33,13 +33,5 @@ class Settings:
     ffmpeg_bin: str = os.getenv("FFMPEG_BIN", "ffmpeg")
     ffprobe_bin: str = os.getenv("FFPROBE_BIN", "ffprobe")
 
-    @property
-    def storage_tus_url(self) -> str:
-        return (
-            f"https://{self.supabase_project_ref}.storage.supabase.co"
-            "/storage/v1/upload/resumable"
-        )
-
-
 SETTINGS = Settings()
 
