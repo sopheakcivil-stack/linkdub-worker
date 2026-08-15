@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -17,30 +18,34 @@ class ProcessingServiceError(RuntimeError):
     pass
 
 
-SPLIT_PUNCTUATION = re.compile(r"[ã€‚ï¼ï¼Ÿ!?ï¼›;â€¦]$")
+SPLIT_PUNCTUATION = re.compile(r"[。！？!?；;…]$")
 
 
 def transcribe_chinese(
     audio_path: Path,
     settings: Settings = SETTINGS,
+    time_offset: float = 0.0,
 ) -> list[Segment]:
-    from faster_whisper import WhisperModel
+    from faster_whisper import BatchedInferencePipeline, WhisperModel
 
     model = WhisperModel(
         settings.whisper_model,
         device="cpu",
         compute_type=settings.whisper_compute_type,
-        cpu_threads=0,
+        cpu_threads=settings.whisper_cpu_threads,
         num_workers=1,
     )
-    raw_segments, _ = model.transcribe(
+    batched_model = BatchedInferencePipeline(model=model)
+    raw_segments, _ = batched_model.transcribe(
         str(audio_path),
+        batch_size=settings.whisper_batch_size,
         language="zh",
-        beam_size=5,
+        beam_size=1,
         vad_filter=True,
         vad_parameters={"min_silence_duration_ms": 450},
         word_timestamps=True,
         condition_on_previous_text=False,
+        temperature=0,
     )
     result: list[Segment] = []
     for raw in raw_segments:
@@ -48,9 +53,18 @@ def transcribe_chinese(
         if not words:
             text = raw.text.strip()
             if text:
-                result.append(Segment(float(raw.start), float(raw.end), text))
+                result.append(
+                    Segment(
+                        time_offset + float(raw.start),
+                        time_offset + float(raw.end),
+                        text,
+                    )
+                )
             continue
-        result.extend(_split_words(words, float(raw.start), float(raw.end)))
+        for segment in _split_words(words, float(raw.start), float(raw.end)):
+            segment.start += time_offset
+            segment.end += time_offset
+            result.append(segment)
     if not result:
         raise ProcessingServiceError("No Chinese speech was detected in the video")
     return result
@@ -84,28 +98,44 @@ def _split_words(words: list[Any], fallback_start: float, fallback_end: float) -
     return output
 
 
-def translate_segments(segments: list[Segment], target_language: str) -> list[Segment]:
+def translate_segments(
+    segments: list[Segment],
+    target_language: str,
+    settings: Settings = SETTINGS,
+) -> list[Segment]:
     language = LANGUAGES.get(target_language)
     if not language:
         raise ProcessingServiceError(f"Unsupported target language: {target_language}")
-    translator = GoogleTranslator(source="zh-CN", target=language["translate"])
-    for index, segment in enumerate(segments):
+
+    def translate_one(index: int, segment: Segment) -> tuple[int, str]:
         last_error: Exception | None = None
         for attempt in range(4):
             try:
+                translator = GoogleTranslator(
+                    source="zh-CN",
+                    target=language["translate"],
+                )
                 translated = translator.translate(segment.source_text)
                 if not translated or not translated.strip():
                     raise ProcessingServiceError("Translation service returned empty text")
-                segment.translated_text = translated.strip()
-                break
+                return index, translated.strip()
             except Exception as exc:
                 last_error = exc
                 if attempt < 3:
                     time.sleep(1.5 * (attempt + 1))
-        else:
-            raise ProcessingServiceError(
-                f"Translation failed for segment {index + 1}: {last_error}"
-            )
+        raise ProcessingServiceError(
+            f"Translation failed for segment {index + 1}: {last_error}"
+        )
+
+    workers = max(1, min(settings.translation_workers, len(segments)))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [
+            executor.submit(translate_one, index, segment)
+            for index, segment in enumerate(segments)
+        ]
+        for future in as_completed(futures):
+            index, translated = future.result()
+            segments[index].translated_text = translated
     return segments
 
 
@@ -148,4 +178,3 @@ def write_srt(segments: Iterable[Segment], destination: Path, translated: bool) 
             f"{index}\n{_srt_time(segment.start)} --> {_srt_time(segment.end)}\n{text}\n"
         )
     destination.write_text("\n".join(blocks), encoding="utf-8")
-
