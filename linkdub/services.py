@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -18,6 +19,7 @@ class ProcessingServiceError(RuntimeError):
     pass
 
 
+LOGGER = logging.getLogger(__name__)
 SPLIT_PUNCTUATION = re.compile(r"[。！？!?；;…]$")
 
 
@@ -123,9 +125,12 @@ def translate_segments(
                 last_error = exc
                 if attempt < 3:
                     time.sleep(1.5 * (attempt + 1))
-        raise ProcessingServiceError(
-            f"Translation failed for segment {index + 1}: {last_error}"
+        LOGGER.warning(
+            "Translation failed for segment %s after retries; preserving source text: %s",
+            index + 1,
+            last_error,
         )
+        return index, segment.source_text
 
     workers = max(1, min(settings.translation_workers, len(segments)))
     with ThreadPoolExecutor(max_workers=workers) as executor:
