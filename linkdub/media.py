@@ -185,6 +185,45 @@ def extract_speech_audio(source: Path, destination: Path, settings: Settings = S
     )
 
 
+def split_speech_audio(
+    source: Path,
+    output_dir: Path,
+    duration_seconds: float,
+    chunk_count: int,
+    settings: Settings = SETTINGS,
+) -> list[tuple[Path, float]]:
+    """Create independently decodable FLAC chunks for parallel transcription."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    count = max(1, chunk_count)
+    chunk_seconds = duration_seconds / count
+    chunks: list[tuple[Path, float]] = []
+    for index in range(count):
+        start = index * chunk_seconds
+        length = duration_seconds - start if index == count - 1 else chunk_seconds
+        destination = output_dir / f"speech-{index}.flac"
+        run(
+            [
+                settings.ffmpeg_bin,
+                "-y",
+                "-ss",
+                f"{start:.3f}",
+                "-t",
+                f"{max(0.1, length):.3f}",
+                "-i",
+                str(source),
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-c:a",
+                "flac",
+                str(destination),
+            ]
+        )
+        chunks.append((destination, start))
+    return chunks
+
+
 def _atempo_chain(factor: float) -> str:
     filters: list[str] = []
     while factor > 2.0:
@@ -375,4 +414,3 @@ def render_final_video(
         retry[codec_index] = "libx264"
         retry[codec_index + 1 : codec_index + 1] = ["-preset", "veryfast", "-crf", "21"]
         run(retry)
-
