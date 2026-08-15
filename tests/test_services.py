@@ -50,3 +50,20 @@ def test_translation_preserves_segment_order_with_parallel_workers(monkeypatch) 
         "translated-二",
         "translated-三",
     ]
+
+
+def test_translation_preserves_source_when_service_returns_empty(monkeypatch) -> None:
+    class EmptyTranslator:
+        def __init__(self, **_kwargs):
+            pass
+
+        def translate(self, _text: str) -> str:
+            return ""
+
+    monkeypatch.setattr("linkdub.services.GoogleTranslator", EmptyTranslator)
+    monkeypatch.setattr("linkdub.services.time.sleep", lambda _seconds: None)
+    segments = [Segment(0, 1, "。")]
+
+    translate_segments(segments, "English", Settings(translation_workers=1))
+
+    assert segments[0].translated_text == "。"
