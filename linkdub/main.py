@@ -12,6 +12,24 @@ from .queue import WorkerApiClient
 LOG = logging.getLogger("linkdub")
 
 
+def failure_update_fields(job: dict, message: str) -> dict:
+    """Return the queue update for a failed processing attempt."""
+    attempt = int(job.get("attempts") or 1)
+    max_attempts = int(job.get("max_attempts") or 3)
+    if attempt < max_attempts:
+        return {
+            "status": "queued",
+            "stage": f"Retry scheduled ({attempt}/{max_attempts})",
+            "progress": 0,
+            "error": message,
+        }
+    return {
+        "status": "failed",
+        "stage": "Failed",
+        "error": message,
+    }
+
+
 def _heartbeat(api: WorkerApiClient, job_id: str, stop: threading.Event) -> None:
     while not stop.wait(120):
         try:
@@ -45,12 +63,7 @@ def process_once() -> bool:
         LOG.exception("Job %s failed", job_id)
         message = f"{type(exc).__name__}: {exc}"[:2000]
         try:
-            api.update(
-                job_id,
-                status="failed",
-                stage="Failed",
-                error=message,
-            )
+            api.update(job_id, **failure_update_fields(job, message))
         except Exception:
             LOG.exception("Could not report job failure")
         raise
