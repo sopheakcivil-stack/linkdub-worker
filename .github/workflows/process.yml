@@ -13,10 +13,6 @@ on:
     - cron: "*/5 * * * *"
   workflow_dispatch:
 
-concurrency:
-  group: linkdub-production-worker
-  cancel-in-progress: ${{ github.event_name == 'push' }}
-
 permissions:
   contents: read
   id-token: write
@@ -165,3 +161,4 @@ jobs:
           python -m linkdub.parallel_workflow fail
           --state parallel-failure/state.json
           --message "A parallel processing stage failed; the job was safely scheduled for retry."
+
