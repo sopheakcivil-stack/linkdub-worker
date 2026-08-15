@@ -21,6 +21,12 @@ class MediaError(RuntimeError):
     pass
 
 
+DOWNLOAD_HEADERS = {
+    "User-Agent": "LinkDub/1.0 (+https://linkdub-web.vercel.app)",
+    "Accept": "video/*,application/octet-stream;q=0.9,*/*;q=0.5",
+}
+
+
 def validate_public_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -73,6 +79,7 @@ def download_video(
         "socket_timeout": 30,
         "quiet": True,
         "no_warnings": False,
+        "http_headers": DOWNLOAD_HEADERS,
     }
     try:
         with yt_dlp.YoutubeDL(options) as downloader:
@@ -97,7 +104,13 @@ def _download_direct(url: str, destination: Path) -> Path:
     current = url
     for _ in range(6):
         validate_public_url(current)
-        response = requests.get(current, stream=True, timeout=(20, 120), allow_redirects=False)
+        response = requests.get(
+            current,
+            stream=True,
+            timeout=(20, 120),
+            allow_redirects=False,
+            headers=DOWNLOAD_HEADERS,
+        )
         if response.is_redirect or response.is_permanent_redirect:
             location = response.headers.get("location")
             if not location:
