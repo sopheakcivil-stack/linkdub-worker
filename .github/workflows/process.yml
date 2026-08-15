@@ -15,41 +15,153 @@ on:
 
 concurrency:
   group: linkdub-production-worker
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 permissions:
   contents: read
   id-token: write
 
+env:
+  WHISPER_MODEL: small
+  WHISPER_COMPUTE_TYPE: int8
+  WHISPER_BATCH_SIZE: "8"
+  WHISPER_CPU_THREADS: "4"
+  TRANSCRIPTION_CHUNKS: "4"
+  TRANSLATION_WORKERS: "8"
+  VOICE_WORKERS: "6"
+  MAX_VIDEO_SECONDS: "10800"
+  ENABLE_DEMUCS: "0"
+  ORIGINAL_AUDIO_VOLUME: "0.18"
+
 jobs:
-  process:
+  prepare:
     runs-on: ubuntu-24.04
-    timeout-minutes: 350
-    env:
-      WHISPER_MODEL: small
-      WHISPER_COMPUTE_TYPE: int8
-      MAX_VIDEO_SECONDS: "10800"
-      ENABLE_DEMUCS: "0"
-      ORIGINAL_AUDIO_VOLUME: "0.18"
+    timeout-minutes: 45
+    outputs:
+      has_job: ${{ steps.prepare.outputs.has_job }}
+      job_id: ${{ steps.prepare.outputs.job_id }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-
-      - name: Cache speech recognition model
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/huggingface
-          key: faster-whisper-small-v1
-
       - name: Install media tools and worker dependencies
         run: |
           sudo apt-get update
           sudo apt-get install --yes ffmpeg
           python -m pip install --requirement requirements.txt
+      - id: prepare
+        name: Download once and split speech into four chunks
+        run: >-
+          python -m linkdub.parallel_workflow prepare
+          --state parallel-input/state.json
+          --workdir parallel-input
+      - name: Share compact speech chunks with parallel runners
+        if: steps.prepare.outputs.has_job == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linkdub-parallel-input
+          path: |
+            parallel-input/state.json
+            parallel-input/chunks
+          retention-days: 1
+          compression-level: 0
 
-      - name: Claim and process one queued job
-        run: python -m linkdub.main
+  transcribe:
+    needs: prepare
+    if: needs.prepare.outputs.has_job == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        chunk: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Cache speech recognition model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: faster-whisper-small-batched-v1
+      - name: Install worker dependencies
+        run: python -m pip install --requirement requirements.txt
+      - name: Download prepared speech chunks
+        uses: actions/download-artifact@v4
+        with:
+          name: linkdub-parallel-input
+          path: parallel-input
+      - name: Transcribe chunk ${{ matrix.chunk }}
+        run: >-
+          python -m linkdub.parallel_workflow transcribe
+          --state parallel-input/state.json
+          --workdir parallel-input
+          --chunk ${{ matrix.chunk }}
+      - name: Share timestamped chunk transcript
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcript-${{ matrix.chunk }}
+          path: parallel-input/transcript-${{ matrix.chunk }}.json
+          retention-days: 1
+
+  finalize:
+    needs: [prepare, transcribe]
+    if: needs.prepare.outputs.has_job == 'true' && needs.transcribe.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install media tools and worker dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg
+          python -m pip install --requirement requirements.txt
+      - name: Download prepared job state
+        uses: actions/download-artifact@v4
+        with:
+          name: linkdub-parallel-input
+          path: parallel-final
+      - name: Download all timestamped transcripts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: transcript-*
+          path: parallel-final
+          merge-multiple: true
+      - name: Translate, generate voices, render, and upload
+        run: >-
+          python -m linkdub.parallel_workflow finalize
+          --state parallel-final/state.json
+          --workdir parallel-final
+
+  recover:
+    needs: [prepare, transcribe, finalize]
+    if: >-
+      always() &&
+      needs.prepare.outputs.has_job == 'true' &&
+      (needs.transcribe.result == 'failure' || needs.finalize.result == 'failure')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --requirement requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: linkdub-parallel-input
+          path: parallel-failure
+      - name: Requeue safely after a parallel-stage failure
+        run: >-
+          python -m linkdub.parallel_workflow fail
+          --state parallel-failure/state.json
+          --message "A parallel processing stage failed; the job was safely scheduled for retry."
