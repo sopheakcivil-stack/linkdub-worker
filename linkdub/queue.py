@@ -88,6 +88,10 @@ class WorkerApiClient:
         self._post({"action": "segments", "job_id": job_id, "segments": segments})
 
     def upload_artifact(self, job_id: str, kind: str, path: Path) -> dict[str, str]:
+        github_token = os.getenv("LINKDUB_GITHUB_TOKEN")
+        if kind == "video" and github_token:
+            return self._upload_github_release(job_id, path, github_token)
+
         signed = self._post({"action": "upload-url", "job_id": job_id, "kind": kind})
         last_error: Exception | None = None
         for attempt in range(3):
@@ -120,3 +124,80 @@ class WorkerApiClient:
             "public_url": str(signed["public_url"]),
         }
 
+    def _upload_github_release(
+        self,
+        job_id: str,
+        path: Path,
+        token: str,
+    ) -> dict[str, str]:
+        repository = os.getenv("GITHUB_REPOSITORY", "sopheakcivil-stack/linkdub-worker")
+        api_url = f"https://api.github.com/repos/{repository}"
+        tag = f"linkdub-result-{job_id}"
+        asset_name = f"linkdub-{job_id}.mp4"
+        headers = {
+            "accept": "application/vnd.github+json",
+            "authorization": f"Bearer {token}",
+            "x-github-api-version": "2022-11-28",
+        }
+
+        release_response = self.http.get(
+            f"{api_url}/releases/tags/{tag}", headers=headers, timeout=30
+        )
+        if release_response.status_code == 404:
+            release_response = self.http.post(
+                f"{api_url}/releases",
+                headers=headers,
+                json={
+                    "tag_name": tag,
+                    "target_commitish": "main",
+                    "name": f"LinkDub result {job_id[:8]}",
+                    "body": "Generated automatically by LinkDub.",
+                    "draft": False,
+                    "prerelease": False,
+                },
+                timeout=30,
+            )
+        if release_response.status_code >= 400:
+            raise WorkerApiError(
+                f"GitHub release creation returned {release_response.status_code}: "
+                f"{release_response.text[:1000]}"
+            )
+        release = release_response.json()
+
+        for asset in release.get("assets", []):
+            if asset.get("name") == asset_name:
+                delete_response = self.http.delete(
+                    f"{api_url}/releases/assets/{asset['id']}",
+                    headers=headers,
+                    timeout=30,
+                )
+                if delete_response.status_code not in (204, 404):
+                    raise WorkerApiError(
+                        f"GitHub release asset cleanup returned "
+                        f"{delete_response.status_code}: {delete_response.text[:1000]}"
+                    )
+
+        upload_url = str(release["upload_url"]).split("{", 1)[0]
+        upload_headers = {
+            **headers,
+            "content-type": "video/mp4",
+            "content-length": str(path.stat().st_size),
+        }
+        with path.open("rb") as artifact:
+            upload_response = requests.post(
+                upload_url,
+                params={"name": asset_name},
+                headers=upload_headers,
+                data=artifact,
+                timeout=(30, 3600),
+            )
+        if upload_response.status_code >= 400:
+            raise WorkerApiError(
+                f"GitHub release upload returned {upload_response.status_code}: "
+                f"{upload_response.text[:1000]}"
+            )
+        uploaded = upload_response.json()
+        return {
+            "path": f"releases/{tag}/{asset_name}",
+            "public_url": str(uploaded["browser_download_url"]),
+        }
