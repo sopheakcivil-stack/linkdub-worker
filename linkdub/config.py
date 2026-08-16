@@ -31,6 +31,7 @@ class Settings:
     transcription_chunks: int = int(os.getenv("TRANSCRIPTION_CHUNKS", "4"))
     translation_workers: int = int(os.getenv("TRANSLATION_WORKERS", "8"))
     voice_workers: int = int(os.getenv("VOICE_WORKERS", "6"))
+    max_output_bytes: int = int(os.getenv("MAX_OUTPUT_BYTES", "1900000000"))
     original_audio_volume: float = float(os.getenv("ORIGINAL_AUDIO_VOLUME", "0.18"))
     enable_demucs: bool = os.getenv("ENABLE_DEMUCS", "0") == "1"
     burn_subtitles: bool = os.getenv("BURN_SUBTITLES", "0") == "1"
