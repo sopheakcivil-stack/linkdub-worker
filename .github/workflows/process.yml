@@ -25,6 +25,7 @@ env:
   TRANSCRIPTION_CHUNKS: "4"
   TRANSLATION_WORKERS: "8"
   VOICE_WORKERS: "6"
+  MAX_OUTPUT_BYTES: "1900000000"
   MAX_VIDEO_SECONDS: "10800"
   ENABLE_DEMUCS: "0"
   ORIGINAL_AUDIO_VOLUME: "0.18"
@@ -161,4 +162,3 @@ jobs:
           python -m linkdub.parallel_workflow fail
           --state parallel-failure/state.json
           --message "A parallel processing stage failed; the job was safely scheduled for retry."
-
