@@ -414,3 +414,58 @@ def render_final_video(
         retry[codec_index] = "libx264"
         retry[codec_index + 1 : codec_index + 1] = ["-preset", "veryfast", "-crf", "21"]
         run(retry)
+
+    if destination.exists() and destination.stat().st_size > settings.max_output_bytes:
+        _shrink_rendered_video(destination, duration_seconds, settings)
+
+
+def _shrink_rendered_video(
+    destination: Path,
+    duration_seconds: float,
+    settings: Settings = SETTINGS,
+) -> None:
+    compressed = destination.with_name(f"{destination.stem}-size-safe.mp4")
+    total_bits_per_second = int(
+        settings.max_output_bytes * 8 * 0.90 / max(1.0, duration_seconds)
+    )
+    video_bits_per_second = max(350_000, min(1_200_000, total_bits_per_second - 96_000))
+    run(
+        [
+            settings.ffmpeg_bin,
+            "-y",
+            "-i",
+            str(destination),
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a:0",
+            "-map",
+            "0:s:0?",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-b:v",
+            str(video_bits_per_second),
+            "-maxrate",
+            str(int(video_bits_per_second * 1.15)),
+            "-bufsize",
+            str(video_bits_per_second * 2),
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "copy",
+            "-c:s",
+            "copy",
+            "-movflags",
+            "+faststart",
+            str(compressed),
+        ]
+    )
+    if not compressed.exists() or compressed.stat().st_size <= 0:
+        raise MediaError("Size-safe video render returned an empty file")
+    if compressed.stat().st_size > settings.max_output_bytes:
+        raise MediaError(
+            f"Size-safe video is still too large: {compressed.stat().st_size} bytes"
+        )
+    compressed.replace(destination)
