@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 env:
@@ -29,6 +29,7 @@ env:
   MAX_VIDEO_SECONDS: "10800"
   ENABLE_DEMUCS: "0"
   ORIGINAL_AUDIO_VOLUME: "0.18"
+  LINKDUB_GITHUB_TOKEN: ${{ github.token }}
 
 jobs:
   prepare:
