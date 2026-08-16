@@ -392,7 +392,7 @@ def render_final_video(
             "-c:a",
             "aac",
             "-b:a",
-            "192k",
+            "96k",
             "-c:s",
             "mov_text",
             "-metadata:s:s:0",
