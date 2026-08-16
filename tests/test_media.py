@@ -9,6 +9,7 @@ from linkdub.media import (
     MediaError,
     _atempo_chain,
     build_timed_voice_track,
+    render_final_video,
     split_speech_audio,
     validate_public_url,
 )
@@ -69,3 +70,21 @@ def test_audio_is_split_into_equal_parallel_chunks(tmp_path: Path, monkeypatch) 
         "speech-3.flac",
     ]
     assert len(commands) == 4
+
+
+def test_final_mix_uses_size_safe_audio_bitrate(tmp_path: Path, monkeypatch) -> None:
+    commands: list[list[str]] = []
+    monkeypatch.setattr("linkdub.media.has_audio", lambda *_args: True)
+    monkeypatch.setattr("linkdub.media.run", lambda command: commands.append(command))
+
+    render_final_video(
+        tmp_path / "source.mp4",
+        tmp_path / "voices.wav",
+        tmp_path / "translated.srt",
+        tmp_path / "result.mp4",
+        duration_seconds=10_545.946,
+        target_language="English",
+    )
+
+    bitrate_index = commands[0].index("-b:a")
+    assert commands[0][bitrate_index + 1] == "96k"
