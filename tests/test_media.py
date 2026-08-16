@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from linkdub.config import Settings
 from linkdub.media import (
     MediaError,
     _atempo_chain,
@@ -88,3 +89,31 @@ def test_final_mix_uses_size_safe_audio_bitrate(tmp_path: Path, monkeypatch) -> 
 
     bitrate_index = commands[0].index("-b:a")
     assert commands[0][bitrate_index + 1] == "96k"
+
+
+def test_oversized_render_is_reencoded_below_limit(tmp_path: Path, monkeypatch) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str]) -> None:
+        commands.append(command)
+        output = Path(command[-1])
+        output.write_bytes(b"x" * (101 if len(commands) == 1 else 90))
+
+    monkeypatch.setattr("linkdub.media.has_audio", lambda *_args: True)
+    monkeypatch.setattr("linkdub.media.run", fake_run)
+    destination = tmp_path / "result.mp4"
+
+    render_final_video(
+        tmp_path / "source.mp4",
+        tmp_path / "voices.wav",
+        tmp_path / "translated.srt",
+        destination,
+        duration_seconds=10_545.946,
+        target_language="English",
+        settings=Settings(max_output_bytes=100),
+    )
+
+    assert len(commands) == 2
+    assert "libx264" in commands[1]
+    assert "ultrafast" in commands[1]
+    assert destination.stat().st_size == 90
